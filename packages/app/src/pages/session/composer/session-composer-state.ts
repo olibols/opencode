@@ -7,6 +7,7 @@ import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { type SessionMode, type SessionQuestionKind, resolveQuestionKind, resolveSessionMode } from "./session-mode"
 
 export function createSessionComposerBlocked() {
   const params = useParams()
@@ -43,6 +44,21 @@ export function createSessionComposerState() {
     const id = params.id
     if (!id) return []
     return globalSync.data.session_todo[id] ?? []
+  })
+
+  const activeMode = createMemo((): SessionMode => {
+    const id = params.id
+    if (!id) return "build"
+    return resolveSessionMode(sync.data.message[id])
+  })
+
+  const questionKind = createMemo((): SessionQuestionKind => {
+    const request = questionRequest()
+    if (!request?.tool) return "generic"
+    return resolveQuestionKind({
+      request,
+      parts: sync.data.part[request.tool.messageID],
+    })
   })
 
   const [store, setStore] = createStore({
@@ -149,6 +165,8 @@ export function createSessionComposerState() {
     permissionResponding,
     decide,
     todos,
+    activeMode,
+    questionKind,
     dock: () => store.dock,
     closing: () => store.closing,
     opening: () => store.opening,

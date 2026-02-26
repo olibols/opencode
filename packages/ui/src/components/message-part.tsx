@@ -253,6 +253,16 @@ export function getToolInfo(tool: string, input: any = {}): ToolInfo {
         icon: "bubble-5",
         title: i18n.t("ui.tool.questions"),
       }
+    case "plan_enter":
+      return {
+        icon: "task",
+        title: i18n.t("ui.tool.planEnter"),
+      }
+    case "plan_exit":
+      return {
+        icon: "task",
+        title: i18n.t("ui.tool.planExit"),
+      }
     default:
       return {
         icon: "mcp",
@@ -1113,60 +1123,65 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   }
 
   const render = ToolRegistry.render(part.tool) ?? GenericTool
+  const hideToolWhenPrompting = createMemo(
+    () => showQuestion() && (part.tool === "plan_enter" || part.tool === "plan_exit"),
+  )
 
   return (
     <Show when={!hideQuestion()}>
       <div data-component="tool-part-wrapper" data-permission={showPermission()} data-question={showQuestion()}>
-        <Switch>
-          <Match when={part.state.status === "error" && part.state.error}>
-            {(error) => {
-              const cleaned = error().replace("Error: ", "")
-              if (part.tool === "question" && cleaned.includes("dismissed this question")) {
+        <Show when={!hideToolWhenPrompting()}>
+          <Switch>
+            <Match when={part.state.status === "error" && part.state.error}>
+              {(error) => {
+                const cleaned = error().replace("Error: ", "")
+                if (part.tool === "question" && cleaned.includes("dismissed this question")) {
+                  return (
+                    <div style="width: 100%; display: flex; justify-content: flex-end;">
+                      <span class="text-13-regular text-text-weak cursor-default">
+                        {i18n.t("ui.tool.questions")} dismissed
+                      </span>
+                    </div>
+                  )
+                }
+                const [title, ...rest] = cleaned.split(": ")
                 return (
-                  <div style="width: 100%; display: flex; justify-content: flex-end;">
-                    <span class="text-13-regular text-text-weak cursor-default">
-                      {i18n.t("ui.tool.questions")} dismissed
-                    </span>
-                  </div>
+                  <Card variant="error">
+                    <div data-component="tool-error">
+                      <Icon name="circle-ban-sign" size="small" />
+                      <Switch>
+                        <Match when={title && title.length < 30}>
+                          <div data-slot="message-part-tool-error-content">
+                            <div data-slot="message-part-tool-error-title">{title}</div>
+                            <span data-slot="message-part-tool-error-message">{rest.join(": ")}</span>
+                          </div>
+                        </Match>
+                        <Match when={true}>
+                          <span data-slot="message-part-tool-error-message">{cleaned}</span>
+                        </Match>
+                      </Switch>
+                    </div>
+                  </Card>
                 )
-              }
-              const [title, ...rest] = cleaned.split(": ")
-              return (
-                <Card variant="error">
-                  <div data-component="tool-error">
-                    <Icon name="circle-ban-sign" size="small" />
-                    <Switch>
-                      <Match when={title && title.length < 30}>
-                        <div data-slot="message-part-tool-error-content">
-                          <div data-slot="message-part-tool-error-title">{title}</div>
-                          <span data-slot="message-part-tool-error-message">{rest.join(": ")}</span>
-                        </div>
-                      </Match>
-                      <Match when={true}>
-                        <span data-slot="message-part-tool-error-message">{cleaned}</span>
-                      </Match>
-                    </Switch>
-                  </div>
-                </Card>
-              )
-            }}
-          </Match>
-          <Match when={true}>
-            <Dynamic
-              component={render}
-              input={input()}
-              tool={part.tool}
-              metadata={metadata()}
-              // @ts-expect-error
-              output={part.state.output}
-              status={part.state.status}
-              hideDetails={props.hideDetails}
-              forceOpen={forceOpen()}
-              locked={showPermission() || showQuestion()}
-              defaultOpen={props.defaultOpen}
-            />
-          </Match>
-        </Switch>
+              }}
+            </Match>
+            <Match when={true}>
+              <Dynamic
+                component={render}
+                input={input()}
+                tool={part.tool}
+                metadata={metadata()}
+                // @ts-expect-error
+                output={part.state.output}
+                status={part.state.status}
+                hideDetails={props.hideDetails}
+                forceOpen={forceOpen()}
+                locked={showPermission() || showQuestion()}
+                defaultOpen={props.defaultOpen}
+              />
+            </Match>
+          </Switch>
+        </Show>
         <Show when={showPermission() && permission()}>
           <div data-component="permission-prompt">
             <div data-slot="permission-actions">
@@ -2053,11 +2068,34 @@ ToolRegistry.register({
   },
 })
 
+ToolRegistry.register({
+  name: "plan_enter",
+  render(props) {
+    const i18n = useI18n()
+    return <BasicTool {...props} icon="task" hideDetails trigger={{ title: i18n.t("ui.tool.planEnter") }} />
+  },
+})
+
+ToolRegistry.register({
+  name: "plan_exit",
+  render(props) {
+    const i18n = useI18n()
+    return <BasicTool {...props} icon="task" hideDetails trigger={{ title: i18n.t("ui.tool.planExit") }} />
+  },
+})
+
 function QuestionPrompt(props: { request: QuestionRequest }) {
   const data = useData()
   const i18n = useI18n()
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
+  const transition = createMemo(() => {
+    const ref = props.request.tool
+    if (!ref) return false
+    const part = data.store.part[ref.messageID]?.find((part) => part.type === "tool" && part.callID === ref.callID)
+    if (!part || part.type !== "tool") return false
+    return part.tool === "plan_enter" || part.tool === "plan_exit"
+  })
 
   const [store, setStore] = createStore({
     tab: 0,
@@ -2071,6 +2109,7 @@ function QuestionPrompt(props: { request: QuestionRequest }) {
   const options = createMemo(() => question()?.options ?? [])
   const input = createMemo(() => store.custom[store.tab] ?? "")
   const multi = createMemo(() => question()?.multiple === true)
+  const custom = createMemo(() => question()?.custom !== false)
   const customPicked = createMemo(() => {
     const value = input()
     if (!value) return false
@@ -2127,7 +2166,7 @@ function QuestionPrompt(props: { request: QuestionRequest }) {
   }
 
   function selectOption(optIndex: number) {
-    if (optIndex === options().length) {
+    if (custom() && optIndex === options().length) {
       setStore("editing", true)
       return
     }
@@ -2162,135 +2201,139 @@ function QuestionPrompt(props: { request: QuestionRequest }) {
   }
 
   return (
-    <div data-component="question-prompt">
-      <Show when={!single()}>
-        <div data-slot="question-tabs">
-          <For each={questions()}>
-            {(q, index) => {
-              const active = () => index() === store.tab
-              const answered = () => (store.answers[index()]?.length ?? 0) > 0
-              return (
-                <button
-                  data-slot="question-tab"
-                  data-active={active()}
-                  data-answered={answered()}
-                  onClick={() => selectTab(index())}
-                >
-                  {q.header}
-                </button>
-              )
-            }}
-          </For>
-          <button data-slot="question-tab" data-active={confirm()} onClick={() => selectTab(questions().length)}>
-            {i18n.t("ui.common.confirm")}
-          </button>
-        </div>
-      </Show>
-
-      <Show when={!confirm()}>
-        <div data-slot="question-content">
-          <div data-slot="question-text">
-            {question()?.question}
-            {multi() ? " " + i18n.t("ui.question.multiHint") : ""}
-          </div>
-          <div data-slot="question-options">
-            <For each={options()}>
-              {(opt, i) => {
-                const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
+    <Show when={!transition()}>
+      <div data-component="question-prompt">
+        <Show when={!single()}>
+          <div data-slot="question-tabs">
+            <For each={questions()}>
+              {(q, index) => {
+                const active = () => index() === store.tab
+                const answered = () => (store.answers[index()]?.length ?? 0) > 0
                 return (
-                  <button data-slot="question-option" data-picked={picked()} onClick={() => selectOption(i())}>
-                    <span data-slot="option-label">{opt.label}</span>
-                    <Show when={opt.description}>
-                      <span data-slot="option-description">{opt.description}</span>
-                    </Show>
-                    <Show when={picked()}>
-                      <Icon name="check-small" size="normal" />
-                    </Show>
+                  <button
+                    data-slot="question-tab"
+                    data-active={active()}
+                    data-answered={answered()}
+                    onClick={() => selectTab(index())}
+                  >
+                    {q.header}
                   </button>
                 )
               }}
             </For>
-            <button
-              data-slot="question-option"
-              data-picked={customPicked()}
-              onClick={() => selectOption(options().length)}
-            >
-              <span data-slot="option-label">{i18n.t("ui.messagePart.option.typeOwnAnswer")}</span>
-              <Show when={!store.editing && input()}>
-                <span data-slot="option-description">{input()}</span>
-              </Show>
-              <Show when={customPicked()}>
-                <Icon name="check-small" size="normal" />
-              </Show>
+            <button data-slot="question-tab" data-active={confirm()} onClick={() => selectTab(questions().length)}>
+              {i18n.t("ui.common.confirm")}
             </button>
-            <Show when={store.editing}>
-              <form data-slot="custom-input-form" onSubmit={handleCustomSubmit}>
-                <input
-                  ref={(el) => setTimeout(() => el.focus(), 0)}
-                  type="text"
-                  data-slot="custom-input"
-                  placeholder={i18n.t("ui.question.custom.placeholder")}
-                  value={input()}
-                  onInput={(e) => {
-                    const inputs = [...store.custom]
-                    inputs[store.tab] = e.currentTarget.value
-                    setStore("custom", inputs)
-                  }}
-                />
-                <Button type="submit" variant="primary" size="small">
-                  {multi() ? i18n.t("ui.common.add") : i18n.t("ui.common.submit")}
-                </Button>
-                <Button type="button" variant="ghost" size="small" onClick={() => setStore("editing", false)}>
-                  {i18n.t("ui.common.cancel")}
-                </Button>
-              </form>
-            </Show>
           </div>
-        </div>
-      </Show>
-
-      <Show when={confirm()}>
-        <div data-slot="question-review">
-          <div data-slot="review-title">{i18n.t("ui.messagePart.review.title")}</div>
-          <For each={questions()}>
-            {(q, index) => {
-              const value = () => store.answers[index()]?.join(", ") ?? ""
-              const answered = () => Boolean(value())
-              return (
-                <div data-slot="review-item">
-                  <span data-slot="review-label">{q.question}</span>
-                  <span data-slot="review-value" data-answered={answered()}>
-                    {answered() ? value() : i18n.t("ui.question.review.notAnswered")}
-                  </span>
-                </div>
-              )
-            }}
-          </For>
-        </div>
-      </Show>
-
-      <div data-slot="question-actions">
-        <Button variant="ghost" size="small" onClick={reject}>
-          {i18n.t("ui.common.dismiss")}
-        </Button>
-        <Show when={!single()}>
-          <Show when={confirm()}>
-            <Button variant="primary" size="small" onClick={submit}>
-              {i18n.t("ui.common.submit")}
-            </Button>
-          </Show>
-          <Show when={!confirm() && multi()}>
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => selectTab(store.tab + 1)}
-              disabled={(store.answers[store.tab]?.length ?? 0) === 0}
-            >
-              {i18n.t("ui.common.next")}
-            </Button>
-          </Show>
         </Show>
+
+        <Show when={!confirm()}>
+          <div data-slot="question-content">
+            <div data-slot="question-text">
+              {question()?.question}
+              {multi() ? " " + i18n.t("ui.question.multiHint") : ""}
+            </div>
+            <div data-slot="question-options">
+              <For each={options()}>
+                {(opt, i) => {
+                  const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
+                  return (
+                    <button data-slot="question-option" data-picked={picked()} onClick={() => selectOption(i())}>
+                      <span data-slot="option-label">{opt.label}</span>
+                      <Show when={opt.description}>
+                        <span data-slot="option-description">{opt.description}</span>
+                      </Show>
+                      <Show when={picked()}>
+                        <Icon name="check-small" size="normal" />
+                      </Show>
+                    </button>
+                  )
+                }}
+              </For>
+              <Show when={custom()}>
+                <button
+                  data-slot="question-option"
+                  data-picked={customPicked()}
+                  onClick={() => selectOption(options().length)}
+                >
+                  <span data-slot="option-label">{i18n.t("ui.messagePart.option.typeOwnAnswer")}</span>
+                  <Show when={!store.editing && input()}>
+                    <span data-slot="option-description">{input()}</span>
+                  </Show>
+                  <Show when={customPicked()}>
+                    <Icon name="check-small" size="normal" />
+                  </Show>
+                </button>
+                <Show when={store.editing}>
+                  <form data-slot="custom-input-form" onSubmit={handleCustomSubmit}>
+                    <input
+                      ref={(el) => setTimeout(() => el.focus(), 0)}
+                      type="text"
+                      data-slot="custom-input"
+                      placeholder={i18n.t("ui.question.custom.placeholder")}
+                      value={input()}
+                      onInput={(e) => {
+                        const inputs = [...store.custom]
+                        inputs[store.tab] = e.currentTarget.value
+                        setStore("custom", inputs)
+                      }}
+                    />
+                    <Button type="submit" variant="primary" size="small">
+                      {multi() ? i18n.t("ui.common.add") : i18n.t("ui.common.submit")}
+                    </Button>
+                    <Button type="button" variant="ghost" size="small" onClick={() => setStore("editing", false)}>
+                      {i18n.t("ui.common.cancel")}
+                    </Button>
+                  </form>
+                </Show>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={confirm()}>
+          <div data-slot="question-review">
+            <div data-slot="review-title">{i18n.t("ui.messagePart.review.title")}</div>
+            <For each={questions()}>
+              {(q, index) => {
+                const value = () => store.answers[index()]?.join(", ") ?? ""
+                const answered = () => Boolean(value())
+                return (
+                  <div data-slot="review-item">
+                    <span data-slot="review-label">{q.question}</span>
+                    <span data-slot="review-value" data-answered={answered()}>
+                      {answered() ? value() : i18n.t("ui.question.review.notAnswered")}
+                    </span>
+                  </div>
+                )
+              }}
+            </For>
+          </div>
+        </Show>
+
+        <div data-slot="question-actions">
+          <Button variant="ghost" size="small" onClick={reject}>
+            {i18n.t("ui.common.dismiss")}
+          </Button>
+          <Show when={!single()}>
+            <Show when={confirm()}>
+              <Button variant="primary" size="small" onClick={submit}>
+                {i18n.t("ui.common.submit")}
+              </Button>
+            </Show>
+            <Show when={!confirm() && multi()}>
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={() => selectTab(store.tab + 1)}
+                disabled={(store.answers[store.tab]?.length ?? 0) === 0}
+              >
+                {i18n.t("ui.common.next")}
+              </Button>
+            </Show>
+          </Show>
+        </div>
       </div>
-    </div>
+    </Show>
   )
 }
